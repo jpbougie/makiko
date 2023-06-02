@@ -1,6 +1,13 @@
+use super::channel::{ChannelEvent, ChannelReply, ChannelReq, DataType};
+use super::client_state::{self, ClientState};
+use super::negotiate;
+use super::pump::Pump;
+use super::recv::{RecvState, ResultRecvState};
+use crate::codec::{PacketDecode, PacketEncode};
+use crate::codes::msg;
+use crate::error::{Error, Result};
 use bytes::Bytes;
 use futures_core::ready;
-use guard::guard;
 use parking_lot::Mutex;
 use std::cmp::min;
 use std::collections::VecDeque;
@@ -10,14 +17,6 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::PollSender;
-use crate::codec::{PacketEncode, PacketDecode};
-use crate::codes::msg;
-use crate::error::{Result, Error};
-use super::negotiate;
-use super::channel::{ChannelEvent, ChannelReq, ChannelReply, DataType};
-use super::client_state::{self, ClientState};
-use super::pump::Pump;
-use super::recv::{ResultRecvState, RecvState};
 
 pub(super) struct ChannelInit {
     pub our_id: u32,
@@ -99,7 +98,7 @@ pub(super) fn pump_channel(
         if negotiate::is_ready(st) {
             send_channel_close(st, channel_st);
             channel_st.close_sent = true;
-            return Ok(Pump::Progress)
+            return Ok(Pump::Progress);
         }
     }
 
@@ -109,7 +108,7 @@ pub(super) fn pump_channel(
         channel_st.send_datas.clear();
         channel_st.recv_replies.clear();
         channel_st.send_replies.clear();
-        return Ok(Pump::Progress)
+        return Ok(Pump::Progress);
     }
 
     if negotiate::is_ready(st) && !channel_st.close_sent {
@@ -118,7 +117,7 @@ pub(super) fn pump_channel(
             if let Some(reply_tx) = req.reply_tx {
                 channel_st.recv_replies.push_back(RecvReply { reply_tx });
             }
-            return Ok(Pump::Progress)
+            return Ok(Pump::Progress);
         }
 
         if !channel_st.send_replies.is_empty() {
@@ -130,14 +129,14 @@ pub(super) fn pump_channel(
                 };
                 send_channel_reply(st, channel_st, reply);
                 channel_st.send_replies.pop_front();
-                return Ok(Pump::Progress)
+                return Ok(Pump::Progress);
             }
         }
 
         if let Some(mut data) = channel_st.send_datas.pop_front() {
             if send_channel_data(st, channel_st, &mut data.data) {
                 let _: Result<_, _> = data.sent_tx.send(());
-                return Ok(Pump::Progress)
+                return Ok(Pump::Progress);
             } else {
                 channel_st.send_datas.push_front(data);
             }
@@ -147,14 +146,12 @@ pub(super) fn pump_channel(
         if recv_window_delta >= channel_st.recv_window_max / 8 {
             send_channel_window_adjust(st, channel_st, recv_window_delta);
             channel_st.recv_window += recv_window_delta;
-            return Ok(Pump::Progress)
+            return Ok(Pump::Progress);
         }
     }
 
     Ok(Pump::Pending)
 }
-
-
 
 pub(super) fn send_request(
     st: &mut ClientState,
@@ -162,7 +159,7 @@ pub(super) fn send_request(
     req: ChannelReq,
 ) -> Result<()> {
     if channel_st.closed {
-        return Err(Error::ChannelClosed)
+        return Err(Error::ChannelClosed);
     }
     channel_st.send_reqs.push_back(req);
     client_state::wakeup_client(st);
@@ -177,29 +174,36 @@ fn send_channel_request(st: &mut ClientState, channel_st: &ChannelState, req: &C
     payload.put_bool(req.reply_tx.is_some());
     payload.put_raw(&req.payload);
     st.codec.send_pipe.feed_packet(&payload.finish());
-    log::debug!("sending SSH_MSG_CHANNEL_REQUEST {:?} for our channel {}",
-        req.request_type, channel_st.our_id);
+    log::debug!(
+        "sending SSH_MSG_CHANNEL_REQUEST {:?} for our channel {}",
+        req.request_type,
+        channel_st.our_id
+    );
 }
 
 pub(super) fn recv_channel_success(channel_st: &mut ChannelState) -> ResultRecvState {
-    guard!{let Some(reply) = channel_st.recv_replies.pop_front() else {
+    let Some(reply) = channel_st.recv_replies.pop_front() else {
         return Err(Error::Protocol("received SSH_MSG_CHANNEL_SUCCESS, but no reply was expected"))
-    }};
-    log::debug!("received SSH_MSG_CHANNEL_SUCCESS for our channel {}", channel_st.our_id);
+    };
+    log::debug!(
+        "received SSH_MSG_CHANNEL_SUCCESS for our channel {}",
+        channel_st.our_id
+    );
     let _: Result<_, _> = reply.reply_tx.send(ChannelReply::Success);
     Ok(None)
 }
 
 pub(super) fn recv_channel_failure(channel_st: &mut ChannelState) -> ResultRecvState {
-    guard!{let Some(reply) = channel_st.recv_replies.pop_front() else {
+    let Some(reply) = channel_st.recv_replies.pop_front() else {
         return Err(Error::Protocol("received SSH_MSG_CHANNEL_FAILURE, but no reply was expected"))
-    }};
-    log::debug!("received SSH_MSG_CHANNEL_FAILURE for our channel {}", channel_st.our_id);
+    };
+    log::debug!(
+        "received SSH_MSG_CHANNEL_FAILURE for our channel {}",
+        channel_st.our_id
+    );
     let _: Result<_, _> = reply.reply_tx.send(ChannelReply::Failure);
     Ok(None)
 }
-
-
 
 pub(super) fn recv_channel_request(
     channel_st: &mut ChannelState,
@@ -217,7 +221,11 @@ pub(super) fn recv_channel_request(
         None
     };
 
-    log::debug!("received SSH_MSG_CHANNEL_REQUEST {:?} for our channel {}", request_type, channel_st.our_id);
+    log::debug!(
+        "received SSH_MSG_CHANNEL_REQUEST {:?} for our channel {}",
+        request_type,
+        channel_st.our_id
+    );
 
     let channel_req = ChannelReq {
         request_type,
@@ -232,18 +240,22 @@ fn send_channel_reply(st: &mut ClientState, channel_st: &ChannelState, reply: Ch
     match reply {
         ChannelReply::Success => {
             payload.put_u8(msg::CHANNEL_SUCCESS);
-            log::debug!("sending SSH_MSG_CHANNEL_SUCCESS for our channel {:?}", channel_st.our_id);
-        },
+            log::debug!(
+                "sending SSH_MSG_CHANNEL_SUCCESS for our channel {:?}",
+                channel_st.our_id
+            );
+        }
         ChannelReply::Failure => {
             payload.put_u8(msg::CHANNEL_FAILURE);
-            log::debug!("sending SSH_MSG_CHANNEL_FAILURE for our channel {:?}", channel_st.our_id);
-        },
+            log::debug!(
+                "sending SSH_MSG_CHANNEL_FAILURE for our channel {:?}",
+                channel_st.our_id
+            );
+        }
     }
     payload.put_u32(channel_st.their_id);
     st.codec.send_pipe.feed_packet(&payload.finish());
 }
-
-
 
 pub(super) fn send_data(
     st: &mut ClientState,
@@ -251,7 +263,7 @@ pub(super) fn send_data(
     data: ChannelSendData,
 ) -> Result<impl Future<Output = Result<()>>> {
     if channel_st.closed {
-        return Err(Error::ChannelClosed)
+        return Err(Error::ChannelClosed);
     }
     let (sent_tx, sent_rx) = oneshot::channel();
     channel_st.send_datas.push_back(SendData { data, sent_tx });
@@ -259,13 +271,24 @@ pub(super) fn send_data(
     Ok(async { sent_rx.await.map_err(|_| Error::ChannelClosed) })
 }
 
-fn send_channel_data(st: &mut ClientState, channel_st: &mut ChannelState, data: &mut ChannelSendData) -> bool {
+fn send_channel_data(
+    st: &mut ClientState,
+    channel_st: &mut ChannelState,
+    data: &mut ChannelSendData,
+) -> bool {
     match data {
         ChannelSendData::Data(ref mut data, data_type) => {
-            if data.is_empty() { return true }
+            if data.is_empty() {
+                return true;
+            }
 
-            let send_len = min(data.len(), min(channel_st.send_window, channel_st.send_len_max));
-            if send_len == 0 { return false }
+            let send_len = min(
+                data.len(),
+                min(channel_st.send_window, channel_st.send_len_max),
+            );
+            if send_len == 0 {
+                return false;
+            }
             let send_data = data.split_to(send_len);
 
             let mut payload = PacketEncode::new();
@@ -273,31 +296,37 @@ fn send_channel_data(st: &mut ClientState, channel_st: &mut ChannelState, data: 
                 DataType::Standard => {
                     payload.put_u8(msg::CHANNEL_DATA);
                     payload.put_u32(channel_st.their_id);
-                    log::trace!("sending SSH_MSG_CHANNEL_DATA for our channel {} with {} bytes",
-                        channel_st.our_id, send_data.len());
-                },
+                    log::trace!(
+                        "sending SSH_MSG_CHANNEL_DATA for our channel {} with {} bytes",
+                        channel_st.our_id,
+                        send_data.len()
+                    );
+                }
                 DataType::Extended(code) => {
                     payload.put_u8(msg::CHANNEL_EXTENDED_DATA);
                     payload.put_u32(channel_st.their_id);
                     payload.put_u32(*code);
                     log::trace!("sending SSH_MSG_CHANNEL_EXTENDED_DATA for our channel {}, code {}, with {} bytes",
                         channel_st.our_id, code, send_data.len());
-                },
+                }
             }
             payload.put_bytes(&send_data);
             st.codec.send_pipe.feed_packet(&payload.finish());
 
             channel_st.send_window -= send_len;
             false
-        },
+        }
         ChannelSendData::Eof => {
             let mut payload = PacketEncode::new();
             payload.put_u8(msg::CHANNEL_EOF);
             payload.put_u32(channel_st.their_id);
             st.codec.send_pipe.feed_packet(&payload.finish());
-            log::debug!("sending SSH_MSG_CHANNEL_EOF for our channel {}", channel_st.our_id);
+            log::debug!(
+                "sending SSH_MSG_CHANNEL_EOF for our channel {}",
+                channel_st.our_id
+            );
             true
-        },
+        }
     }
 }
 
@@ -308,14 +337,19 @@ pub(super) fn recv_channel_data(
 ) -> ResultRecvState {
     let data = payload.get_bytes()?;
     if data.len() > channel_st.recv_window {
-        return Err(Error::Protocol("received SSH_MSG_CHANNEL_DATA that exceeds window size"))
+        return Err(Error::Protocol(
+            "received SSH_MSG_CHANNEL_DATA that exceeds window size",
+        ));
     } else if payload.remaining_len() != 0 {
         return Err(Error::Protocol("trailing data in SSH_MSG_CHANNEL_DATA"));
     }
     channel_st.recv_window -= data.len();
 
-    log::trace!("received SSH_MSG_CHANNEL_DATA for our channel {} with {} bytes",
-        channel_st.our_id, data.len());
+    log::trace!(
+        "received SSH_MSG_CHANNEL_DATA for our channel {} with {} bytes",
+        channel_st.our_id,
+        data.len()
+    );
     send_event(channel_mutex, ChannelEvent::Data(data, DataType::Standard))
 }
 
@@ -327,37 +361,50 @@ pub(super) fn recv_channel_extended_data(
     let code = payload.get_u32()?;
     let data = payload.get_bytes()?;
     if data.len() > channel_st.recv_window {
-        return Err(Error::Protocol("received SSH_MSG_CHANNEL_EXTENDED_DATA that exceeds window size"))
+        return Err(Error::Protocol(
+            "received SSH_MSG_CHANNEL_EXTENDED_DATA that exceeds window size",
+        ));
     } else if payload.remaining_len() != 0 {
-        return Err(Error::Protocol("trailing data in SSH_MSG_CHANNEL_EXTENDED_DATA"));
+        return Err(Error::Protocol(
+            "trailing data in SSH_MSG_CHANNEL_EXTENDED_DATA",
+        ));
     }
     channel_st.recv_window -= data.len();
 
-    log::trace!("received SSH_MSG_CHANNEL_EXTENDED_DATA for our channel {}, code {}, with {} bytes",
-        channel_st.our_id, code, data.len());
-    send_event(channel_mutex, ChannelEvent::Data(data, DataType::Extended(code)))
+    log::trace!(
+        "received SSH_MSG_CHANNEL_EXTENDED_DATA for our channel {}, code {}, with {} bytes",
+        channel_st.our_id,
+        code,
+        data.len()
+    );
+    send_event(
+        channel_mutex,
+        ChannelEvent::Data(data, DataType::Extended(code)),
+    )
 }
 
 pub(super) fn recv_channel_eof(
     channel_st: &mut ChannelState,
     channel_mutex: Arc<Mutex<ChannelState>>,
 ) -> ResultRecvState {
-    log::debug!("received SSH_MSG_CHANNEL_EOF for our channel {}", channel_st.our_id);
+    log::debug!(
+        "received SSH_MSG_CHANNEL_EOF for our channel {}",
+        channel_st.our_id
+    );
     send_event(channel_mutex, ChannelEvent::Eof)
 }
 
-fn send_channel_window_adjust(
-    st: &mut ClientState,
-    channel_st: &mut ChannelState,
-    adjust: usize,
-) {
+fn send_channel_window_adjust(st: &mut ClientState, channel_st: &mut ChannelState, adjust: usize) {
     let mut payload = PacketEncode::new();
     payload.put_u8(msg::CHANNEL_WINDOW_ADJUST);
     payload.put_u32(channel_st.their_id);
     payload.put_u32(adjust as u32);
     st.codec.send_pipe.feed_packet(&payload.finish());
-    log::trace!("sending SSH_MSG_CHANNEL_WINDOW_ADJUST for our channel {} with {} bytes",
-        channel_st.our_id, adjust);
+    log::trace!(
+        "sending SSH_MSG_CHANNEL_WINDOW_ADJUST for our channel {} with {} bytes",
+        channel_st.our_id,
+        adjust
+    );
 }
 
 pub(super) fn recv_channel_window_adjust(
@@ -367,16 +414,19 @@ pub(super) fn recv_channel_window_adjust(
     let adjust = payload.get_u32()? as usize;
     if let Some(send_window) = channel_st.send_window.checked_add(adjust) {
         if send_window <= u32::MAX as usize {
-            log::trace!("received SSH_MSG_CHANNEL_WINDOW_ADJUST for our channel {} with {} bytes",
-                channel_st.our_id, adjust);
+            log::trace!(
+                "received SSH_MSG_CHANNEL_WINDOW_ADJUST for our channel {} with {} bytes",
+                channel_st.our_id,
+                adjust
+            );
             channel_st.send_window = send_window;
-            return Ok(None)
+            return Ok(None);
         }
     }
-    Err(Error::Protocol("received SSH_MSG_CHANNEL_WINDOW_ADJUST that overflows the send window"))
+    Err(Error::Protocol(
+        "received SSH_MSG_CHANNEL_WINDOW_ADJUST that overflows the send window",
+    ))
 }
-
-
 
 pub(super) fn close(st: &mut ClientState, channel_st: &mut ChannelState) {
     if !channel_st.want_close {
@@ -390,14 +440,20 @@ fn send_channel_close(st: &mut ClientState, channel_st: &ChannelState) {
     payload.put_u8(msg::CHANNEL_CLOSE);
     payload.put_u32(channel_st.their_id);
     st.codec.send_pipe.feed_packet(&payload.finish());
-    log::debug!("sending SSH_MSG_CHANNEL_CLOSE for our channel {}", channel_st.our_id);
+    log::debug!(
+        "sending SSH_MSG_CHANNEL_CLOSE for our channel {}",
+        channel_st.our_id
+    );
 }
 
 pub(super) fn recv_channel_close(channel_st: &mut ChannelState) -> ResultRecvState {
     if channel_st.close_recvd {
-        return Err(Error::Protocol("received SSH_MSG_CHANNEL_CLOSE twice"))
+        return Err(Error::Protocol("received SSH_MSG_CHANNEL_CLOSE twice"));
     }
-    log::debug!("received SSH_MSG_CHANNEL_CLOSE for our channel {}", channel_st.our_id);
+    log::debug!(
+        "received SSH_MSG_CHANNEL_CLOSE for our channel {}",
+        channel_st.our_id
+    );
     channel_st.close_recvd = true;
     Ok(None)
 }
@@ -411,8 +467,6 @@ pub(super) fn is_closing(channel_st: &ChannelState) -> bool {
 pub(super) fn is_closed(channel_st: &ChannelState) -> bool {
     channel_st.closed
 }
-
-
 
 fn send_event(channel_mutex: Arc<Mutex<ChannelState>>, event: ChannelEvent) -> ResultRecvState {
     struct SendEventState {
@@ -432,5 +486,8 @@ fn send_event(channel_mutex: Arc<Mutex<ChannelState>>, event: ChannelEvent) -> R
         }
     }
 
-    Ok(Some(Box::new(SendEventState { channel_mutex, event: Some(event) })))
+    Ok(Some(Box::new(SendEventState {
+        channel_mutex,
+        event: Some(event),
+    })))
 }

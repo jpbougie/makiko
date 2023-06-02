@@ -1,11 +1,10 @@
+use super::{Privkey, Pubkey, PubkeyAlgo, SignatureVerified};
+use crate::codec::{PacketDecode, PacketEncode};
+use crate::error::{Error, Result};
 use bytes::Bytes;
-use guard::guard;
-use rsa::{PublicKey as _, PublicKeyParts as _, pkcs8};
+use rsa::{pkcs8, PublicKey as _, PublicKeyParts as _};
 use sha1::digest;
 use std::fmt;
-use crate::codec::{PacketDecode, PacketEncode};
-use crate::error::{Result, Error};
-use super::{PubkeyAlgo, Pubkey, Privkey, SignatureVerified};
 
 /// "ssh-rsa" public key algorithm using SHA-1 from RFC 4253.
 ///
@@ -34,7 +33,6 @@ pub static RSA_SHA2_512: PubkeyAlgo = PubkeyAlgo {
     sign: sign::<sha2::Sha512>,
 };
 
-
 /// RSA public key.
 ///
 /// This key is compatible with [`SSH_RSA_SHA1`], [`RSA_SHA2_256`] and [`RSA_SHA2_512`]. You can
@@ -57,16 +55,22 @@ pub struct RsaPrivkey {
 impl RsaPrivkey {
     /// Return the public key associated with this private key.
     pub fn pubkey(&self) -> RsaPubkey {
-        RsaPubkey { pubkey: self.privkey.to_public_key() }
+        RsaPubkey {
+            pubkey: self.privkey.to_public_key(),
+        }
     }
 }
 
-fn verify<H: RsaHash>(pubkey: &Pubkey, message: &[u8], signature_blob: Bytes) -> Result<SignatureVerified> {
-    guard!{let Pubkey::Rsa(pubkey) = pubkey else { return Err(Error::PubkeyFormat) }};
+fn verify<H: RsaHash>(
+    pubkey: &Pubkey,
+    message: &[u8],
+    signature_blob: Bytes,
+) -> Result<SignatureVerified> {
+    let Pubkey::Rsa(pubkey) = pubkey else { return Err(Error::PubkeyFormat) };
 
     let mut signature_blob = PacketDecode::new(signature_blob);
     if signature_blob.get_string()? != H::ALGO_NAME {
-        return Err(Error::Decode("unexpected signature format"))
+        return Err(Error::Decode("unexpected signature format"));
     }
 
     let signature = signature_blob.get_bytes()?;
@@ -83,14 +87,16 @@ fn verify<H: RsaHash>(pubkey: &Pubkey, message: &[u8], signature_blob: Bytes) ->
 }
 
 fn sign<H: RsaHash>(privkey: &Privkey, message: &[u8]) -> Result<Bytes> {
-    guard!{let Privkey::Rsa(privkey) = privkey else { return Err(Error::PrivkeyFormat) }};
+    let Privkey::Rsa(privkey) = privkey else { return Err(Error::PrivkeyFormat) };
 
     let mut hasher = H::new();
     hasher.update(message);
     let hashed = hasher.finalize();
 
     let scheme = rsa::pkcs1v15::Pkcs1v15Sign::new::<H>();
-    let signature = privkey.privkey.sign(scheme, hashed.as_slice())
+    let signature = privkey
+        .privkey
+        .sign(scheme, hashed.as_slice())
         .map_err(|_| Error::Crypto("could not sign with RSA"))?;
 
     let mut signature_blob = PacketEncode::new();
@@ -126,8 +132,6 @@ pub(super) fn decode_privkey(blob: &mut PacketDecode) -> Result<RsaPrivkey> {
     Ok(RsaPrivkey { privkey })
 }
 
-
-
 trait RsaHash: digest::Digest + pkcs8::AssociatedOid {
     const ALGO_NAME: &'static str;
 }
@@ -145,19 +149,27 @@ impl RsaHash for sha2::Sha512 {
 }
 
 impl From<rsa::RsaPublicKey> for RsaPubkey {
-    fn from(pubkey: rsa::RsaPublicKey) -> Self { Self { pubkey } }
+    fn from(pubkey: rsa::RsaPublicKey) -> Self {
+        Self { pubkey }
+    }
 }
 
 impl From<RsaPubkey> for rsa::RsaPublicKey {
-    fn from(pubkey: RsaPubkey) -> Self { pubkey.pubkey }
+    fn from(pubkey: RsaPubkey) -> Self {
+        pubkey.pubkey
+    }
 }
 
 impl From<rsa::RsaPrivateKey> for RsaPrivkey {
-    fn from(privkey: rsa::RsaPrivateKey) -> Self { Self { privkey } }
+    fn from(privkey: rsa::RsaPrivateKey) -> Self {
+        Self { privkey }
+    }
 }
 
 impl From<RsaPrivkey> for rsa::RsaPrivateKey {
-    fn from(privkey: RsaPrivkey) -> Self { privkey.privkey }
+    fn from(privkey: RsaPrivkey) -> Self {
+        privkey.privkey
+    }
 }
 
 impl fmt::Display for RsaPubkey {

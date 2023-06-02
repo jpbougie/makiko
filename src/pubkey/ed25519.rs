@@ -1,9 +1,8 @@
-use bytes::Bytes;
-use guard::guard;
+use super::{Privkey, Pubkey, PubkeyAlgo, SignatureVerified};
 use crate::codec::{PacketDecode, PacketEncode};
-use crate::error::{Result, Error};
+use crate::error::{Error, Result};
+use bytes::Bytes;
 use std::fmt;
-use super::{PubkeyAlgo, Pubkey, Privkey, SignatureVerified};
 
 /// "ssh-ed25519" public key algorithm from RFC 8709.
 ///
@@ -35,16 +34,18 @@ pub struct Ed25519Privkey {
 impl Ed25519Privkey {
     /// Get the public associated with this private key.
     pub fn pubkey(&self) -> Ed25519Pubkey {
-        Ed25519Pubkey { pubkey: self.keypair.public }
+        Ed25519Pubkey {
+            pubkey: self.keypair.public,
+        }
     }
 }
 
 fn verify(pubkey: &Pubkey, message: &[u8], signature: Bytes) -> Result<SignatureVerified> {
-    guard!{let Pubkey::Ed25519(pubkey) = pubkey else { return Err(Error::PubkeyFormat) }};
+    let Pubkey::Ed25519(pubkey) = pubkey else { return Err(Error::PubkeyFormat) };
 
     let mut signature = PacketDecode::new(signature);
     if signature.get_string()? != "ssh-ed25519" {
-        return Err(Error::Decode("expected signature format 'ssh-ed25519'"))
+        return Err(Error::Decode("expected signature format 'ssh-ed25519'"));
     }
 
     let signature_data = signature.get_byte_array::<64>()?;
@@ -57,10 +58,12 @@ fn verify(pubkey: &Pubkey, message: &[u8], signature: Bytes) -> Result<Signature
 }
 
 fn sign(privkey: &Privkey, message: &[u8]) -> Result<Bytes> {
-    guard!{let Privkey::Ed25519(privkey) = privkey else { return Err(Error::PrivkeyFormat) }};
+    let Privkey::Ed25519(privkey) = privkey else { return Err(Error::PrivkeyFormat) };
 
     use ed25519_dalek::Signer as _;
-    let ed_signature = privkey.keypair.try_sign(message)
+    let ed_signature = privkey
+        .keypair
+        .try_sign(message)
         .map_err(|_| Error::Crypto("could not sign with ed25519"))?;
 
     let mut signature = PacketEncode::new();
@@ -85,7 +88,9 @@ pub(super) fn decode_privkey(blob: &mut PacketDecode) -> Result<Ed25519Privkey> 
     let public_bytes = blob.get_byte_array::<32>()?;
     let keypair_bytes = blob.get_byte_array::<64>()?;
     if public_bytes[..] != keypair_bytes[32..] {
-        return Err(Error::Decode("ed25519 privkey is not valid (public keys do not match)"));
+        return Err(Error::Decode(
+            "ed25519 privkey is not valid (public keys do not match)",
+        ));
     }
 
     let keypair = ed25519_dalek::Keypair::from_bytes(&keypair_bytes)
@@ -93,39 +98,52 @@ pub(super) fn decode_privkey(blob: &mut PacketDecode) -> Result<Ed25519Privkey> 
     Ok(Ed25519Privkey { keypair })
 }
 
-
 impl From<ed25519_dalek::PublicKey> for Ed25519Pubkey {
-    fn from(pubkey: ed25519_dalek::PublicKey) -> Self { Self { pubkey } }
+    fn from(pubkey: ed25519_dalek::PublicKey) -> Self {
+        Self { pubkey }
+    }
 }
 
 impl From<Ed25519Pubkey> for ed25519_dalek::PublicKey {
-    fn from(pubkey: Ed25519Pubkey) -> Self { pubkey.pubkey }
+    fn from(pubkey: Ed25519Pubkey) -> Self {
+        pubkey.pubkey
+    }
 }
 
 impl From<ed25519_dalek::Keypair> for Ed25519Privkey {
-    fn from(keypair: ed25519_dalek::Keypair) -> Self { Self { keypair } }
+    fn from(keypair: ed25519_dalek::Keypair) -> Self {
+        Self { keypair }
+    }
 }
 
 impl From<Ed25519Privkey> for ed25519_dalek::Keypair {
-    fn from(privkey: Ed25519Privkey) -> Self { privkey.keypair }
+    fn from(privkey: Ed25519Privkey) -> Self {
+        privkey.keypair
+    }
 }
 
 impl fmt::Display for Ed25519Pubkey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "ed25519 {:x}", Bytes::copy_from_slice(self.pubkey.as_bytes()))
+        write!(
+            f,
+            "ed25519 {:x}",
+            Bytes::copy_from_slice(self.pubkey.as_bytes())
+        )
     }
 }
 
 impl PartialEq for Ed25519Privkey {
     fn eq(&self, other: &Self) -> bool {
-        self.keypair.public == other.keypair.public &&
-        self.keypair.secret.as_bytes() == other.keypair.secret.as_bytes()
+        self.keypair.public == other.keypair.public
+            && self.keypair.secret.as_bytes() == other.keypair.secret.as_bytes()
     }
 }
 impl Eq for Ed25519Privkey {}
 
 impl Clone for Ed25519Privkey {
     fn clone(&self) -> Self {
-        Self { keypair: ed25519_dalek::Keypair::from_bytes(&self.keypair.to_bytes()).unwrap() }
+        Self {
+            keypair: ed25519_dalek::Keypair::from_bytes(&self.keypair.to_bytes()).unwrap(),
+        }
     }
 }

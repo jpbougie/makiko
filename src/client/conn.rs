@@ -1,5 +1,15 @@
+use super::channel::ChannelEvent;
+use super::channel_state::{self, ChannelInit, ChannelState};
+use super::client::{GlobalReply, GlobalReq};
+use super::client_event::{AcceptChannel, ClientEvent};
+use super::client_state::{self, ClientState};
+use super::pump::Pump;
+use super::recv::ResultRecvState;
+use super::{auth, negotiate, recv};
+use crate::codec::{PacketDecode, PacketEncode};
+use crate::codes::{msg, open};
+use crate::error::{ChannelOpenError, Error, Result};
 use bytes::Bytes;
-use guard::guard;
 use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
 use std::future::Future as _;
@@ -7,18 +17,7 @@ use std::mem::{drop, replace};
 use std::pin::Pin;
 use std::sync::{Arc, Weak};
 use std::task::{Context, Poll};
-use tokio::sync::{oneshot, mpsc};
-use crate::codec::{PacketEncode, PacketDecode};
-use crate::codes::{msg, open};
-use crate::error::{Result, ChannelOpenError, Error};
-use super::{auth, negotiate, recv};
-use super::channel::ChannelEvent;
-use super::channel_state::{self, ChannelState, ChannelInit};
-use super::client::{GlobalReq, GlobalReply};
-use super::client_event::{AcceptChannel, ClientEvent};
-use super::client_state::{self, ClientState};
-use super::pump::Pump;
-use super::recv::ResultRecvState;
+use tokio::sync::{mpsc, oneshot};
 
 #[derive(Default)]
 pub(super) struct ConnState {
@@ -87,14 +86,13 @@ struct RecvReply {
     reply_tx: oneshot::Sender<GlobalReply>,
 }
 
-
 pub(super) fn init_conn() -> ConnState {
     ConnState::default()
 }
 
 pub(super) fn pump_conn(st: &mut ClientState, cx: &mut Context) -> Result<Pump> {
     if !auth::is_authenticated(st) {
-        return Ok(Pump::Pending)
+        return Ok(Pump::Pending);
     }
 
     if negotiate::is_ready(st) {
@@ -103,7 +101,7 @@ pub(super) fn pump_conn(st: &mut ClientState, cx: &mut Context) -> Result<Pump> 
             if let Some(reply_tx) = req.reply_tx {
                 st.conn_st.recv_replies.push_back(RecvReply { reply_tx });
             }
-            return Ok(Pump::Progress)
+            return Ok(Pump::Progress);
         }
     }
 
@@ -117,7 +115,11 @@ fn pump_channels(st: &mut ClientState, cx: &mut Context) -> Result<Pump> {
 
     while let Some(open) = st.conn_st.open_channels.pop_front() {
         let our_id = alloc_our_id(&channels);
-        let open_st = OpenChannelState { our_id, open, open_sent: false };
+        let open_st = OpenChannelState {
+            our_id,
+            open,
+            open_sent: false,
+        };
         channels.insert(our_id, ConnChannelState::Open(open_st));
         progress = Pump::Progress;
     }
@@ -128,9 +130,7 @@ fn pump_channels(st: &mut ClientState, cx: &mut Context) -> Result<Pump> {
         }
     }
 
-    channels.retain(|_, conn_channel_st| {
-        !matches!(conn_channel_st, ConnChannelState::Closed)
-    });
+    channels.retain(|_, conn_channel_st| !matches!(conn_channel_st, ConnChannelState::Closed));
 
     Ok(progress)
 }
@@ -151,25 +151,25 @@ fn pump_channel(
                 progress = Pump::Progress;
             }
             *conn_channel_st = ConnChannelState::Open(open_st);
-        },
+        }
         ConnChannelState::Accept(mut accept_st) => {
             match Pin::new(&mut accept_st.accepted_rx).poll(cx) {
                 Poll::Ready(Ok(Ok(accepted))) => {
                     send_channel_open_confirmation(st, &accept_st, &accepted);
                     *conn_channel_st = init_accepted_channel(accept_st, accepted);
                     progress = Pump::Progress;
-                },
+                }
                 Poll::Ready(Ok(Err(open_err))) => {
                     send_channel_open_failure(st, &accept_st, Some(open_err));
-                },
+                }
                 Poll::Ready(Err(_)) => {
                     send_channel_open_failure(st, &accept_st, None);
-                },
+                }
                 Poll::Pending => {
                     *conn_channel_st = ConnChannelState::Accept(accept_st);
-                },
+                }
             }
-        },
+        }
         ConnChannelState::Ready(channel_mutex) => {
             let mut channel_st = channel_mutex.lock();
             if !channel_state::is_closed(&channel_st) {
@@ -177,8 +177,8 @@ fn pump_channel(
                 drop(channel_st);
                 *conn_channel_st = ConnChannelState::Ready(channel_mutex);
             }
-        },
-        ConnChannelState::Closed => {},
+        }
+        ConnChannelState::Closed => {}
     }
     Ok(progress)
 }
@@ -206,7 +206,6 @@ pub(super) fn recv_conn_packet(
     }
 }
 
-
 pub(super) fn open_channel(st: &mut ClientState, open: OpenChannel) {
     st.conn_st.open_channels.push_back(open);
     client_state::wakeup_client(st);
@@ -215,7 +214,7 @@ pub(super) fn open_channel(st: &mut ClientState, open: OpenChannel) {
 fn alloc_our_id(channels: &HashMap<u32, ConnChannelState>) -> u32 {
     for our_id in 0.. {
         if !channels.contains_key(&our_id) {
-            return our_id
+            return our_id;
         }
     }
     panic!("no free channel ids")
@@ -230,8 +229,11 @@ fn send_channel_open(st: &mut ClientState, open_st: &OpenChannelState) {
     payload.put_u32(open_st.open.recv_packet_len_max as u32);
     payload.put_raw(&open_st.open.open_payload);
     st.codec.send_pipe.feed_packet(&payload.finish());
-    log::debug!("sending SSH_MSG_CHANNEL_OPEN {:?} for our channel {}",
-        open_st.open.channel_type, open_st.our_id);
+    log::debug!(
+        "sending SSH_MSG_CHANNEL_OPEN {:?} for our channel {}",
+        open_st.open.channel_type,
+        open_st.our_id
+    );
 }
 
 fn recv_channel_open_confirmation(
@@ -243,33 +245,40 @@ fn recv_channel_open_confirmation(
     let send_window = payload.get_u32()? as usize;
     let send_packet_len_max = payload.get_u32()? as usize;
     let confirm_payload = payload.remaining();
-    
-    log::debug!("received SSH_MSG_CHANNEL_OPEN_CONFIRMATION for our channel {}, \
-        window {}, max packet size {}", our_id, send_window, send_packet_len_max);
+
+    log::debug!(
+        "received SSH_MSG_CHANNEL_OPEN_CONFIRMATION for our channel {}, \
+        window {}, max packet size {}",
+        our_id,
+        send_window,
+        send_packet_len_max
+    );
 
     let mut channels = st.conn_st.channels.lock();
-    guard!{let Some(conn_channel_st) = channels.get_mut(&our_id) else {
+    let Some(conn_channel_st) = channels.get_mut(&our_id) else {
         return Err(Error::Protocol("received SSH_MSG_CHANNEL_OPEN_CONFIRMATION for unknown channel"));
-    }};
+    };
 
-    guard!{let ConnChannelState::Open(_) = conn_channel_st else {
+    let ConnChannelState::Open(_) = conn_channel_st else {
         return Err(Error::Protocol("received SSH_MSG_CHANNEL_OPEN_CONFIRMATION \
             for a channel that is not being opened"));
-    }};
+    };
     // use `replace()` only after we are sure that `*conn_channel_st` is `Open`
-    guard!{let ConnChannelState::Open(open_st) = replace(conn_channel_st, ConnChannelState::Closed) else {
+    let ConnChannelState::Open(open_st) = replace(conn_channel_st, ConnChannelState::Closed) else {
         unreachable!()
-    }};
+    };
 
-    let confirm = ConfirmChannel { their_id, send_window, send_packet_len_max, confirm_payload };
+    let confirm = ConfirmChannel {
+        their_id,
+        send_window,
+        send_packet_len_max,
+        confirm_payload,
+    };
     *conn_channel_st = init_confirmed_channel(open_st, confirm);
     Ok(None)
 }
 
-fn init_confirmed_channel(
-    open_st: OpenChannelState,
-    confirm: ConfirmChannel,
-) -> ConnChannelState {
+fn init_confirmed_channel(open_st: OpenChannelState, confirm: ConfirmChannel) -> ConnChannelState {
     let (event_tx, event_rx) = mpsc::channel(1);
     let channel_init = ChannelInit {
         our_id: open_st.our_id,
@@ -293,40 +302,44 @@ fn init_confirmed_channel(
     ConnChannelState::Ready(channel_st)
 }
 
-fn recv_channel_open_failure(
-    st: &mut ClientState,
-    payload: &mut PacketDecode,
-) -> ResultRecvState {
+fn recv_channel_open_failure(st: &mut ClientState, payload: &mut PacketDecode) -> ResultRecvState {
     let our_id = payload.get_u32()?;
     let reason_code = payload.get_u32()?;
     let description = payload.get_string()?;
     let description_lang = payload.get_string()?;
-    
+
     let mut channels = st.conn_st.channels.lock();
-    guard!{let Some(conn_channel_st) = channels.get_mut(&our_id) else {
+    let Some(conn_channel_st) = channels.get_mut(&our_id) else {
         return Err(Error::Protocol("received SSH_MSG_CHANNEL_OPEN_FAILURE for unknown channel"));
-    }};
-    guard!{let ConnChannelState::Open(_) = conn_channel_st else {
+    };
+    let ConnChannelState::Open(_) = conn_channel_st else {
         return Err(Error::Protocol("received SSH_MSG_CHANNEL_OPEN_FAILURE \
             for a channel that is not being opened"));
-    }};
+    };
     // use `replace()` only after we are sure that `*conn_channel_st` is `Open`
-    guard!{let ConnChannelState::Open(open_st) = replace(conn_channel_st, ConnChannelState::Closed) else {
+    let ConnChannelState::Open(open_st) = replace(conn_channel_st, ConnChannelState::Closed) else {
         unreachable!()
-    }};
+    };
 
-    log::debug!("received SSH_MSG_CHANNEL_OPEN_FAILURE for our channel {}", our_id);
+    log::debug!(
+        "received SSH_MSG_CHANNEL_OPEN_FAILURE for our channel {}",
+        our_id
+    );
 
-    let error = ChannelOpenError { reason_code, description, description_lang };
+    let error = ChannelOpenError {
+        reason_code,
+        description,
+        description_lang,
+    };
     let _: Result<_, _> = open_st.open.result_tx.send(Err(Error::ChannelOpen(error)));
 
     Ok(None)
 }
 
-
-
 fn recv_channel_success(st: &mut ClientState, payload: &mut PacketDecode) -> ResultRecvState {
-    recv_channel_packet(st, payload,
+    recv_channel_packet(
+        st,
+        payload,
         |_, channel_st, _| channel_state::recv_channel_success(&mut channel_st.lock()),
         "received SSH_MSG_CHANNEL_SUCCESS for unknown channel",
         "received SSH_MSG_CHANNEL_SUCCESS for a channel that is not ready",
@@ -334,7 +347,9 @@ fn recv_channel_success(st: &mut ClientState, payload: &mut PacketDecode) -> Res
 }
 
 fn recv_channel_failure(st: &mut ClientState, payload: &mut PacketDecode) -> ResultRecvState {
-    recv_channel_packet(st, payload,
+    recv_channel_packet(
+        st,
+        payload,
         |_, channel_st, _| channel_state::recv_channel_failure(&mut channel_st.lock()),
         "received SSH_MSG_CHANNEL_FAILURE for unknown channel",
         "received SSH_MSG_CHANNEL_FAILURE for a channel that is not ready",
@@ -342,51 +357,73 @@ fn recv_channel_failure(st: &mut ClientState, payload: &mut PacketDecode) -> Res
 }
 
 fn recv_channel_request(st: &mut ClientState, payload: &mut PacketDecode) -> ResultRecvState {
-    recv_channel_packet(st, payload,
-        |_, channel_st, payload|
-            channel_state::recv_channel_request(&mut channel_st.lock(), channel_st.clone(), payload),
+    recv_channel_packet(
+        st,
+        payload,
+        |_, channel_st, payload| {
+            channel_state::recv_channel_request(&mut channel_st.lock(), channel_st.clone(), payload)
+        },
         "received SSH_MSG_CHANNEL_REQUEST for unknown channel",
         "received SSH_MSG_CHANNEL_REQUEST for a channel that is not ready",
     )
 }
 
 fn recv_channel_data(st: &mut ClientState, payload: &mut PacketDecode) -> ResultRecvState {
-    recv_channel_packet(st, payload,
-        |_, channel_st, payload|
-            channel_state::recv_channel_data(&mut channel_st.lock(), channel_st.clone(), payload),
+    recv_channel_packet(
+        st,
+        payload,
+        |_, channel_st, payload| {
+            channel_state::recv_channel_data(&mut channel_st.lock(), channel_st.clone(), payload)
+        },
         "received SSH_MSG_CHANNEL_DATA for unknown channel",
         "received SSH_MSG_CHANNEL_DATA for a channel that is not ready",
     )
 }
 
 fn recv_channel_extended_data(st: &mut ClientState, payload: &mut PacketDecode) -> ResultRecvState {
-    recv_channel_packet(st, payload,
-        |_, channel_st, payload|
-            channel_state::recv_channel_extended_data(&mut channel_st.lock(), channel_st.clone(), payload),
+    recv_channel_packet(
+        st,
+        payload,
+        |_, channel_st, payload| {
+            channel_state::recv_channel_extended_data(
+                &mut channel_st.lock(),
+                channel_st.clone(),
+                payload,
+            )
+        },
         "received SSH_MSG_CHANNEL_EXTENDED_DATA for unknown channel",
         "received SSH_MSG_CHANNEL_EXTENDED_DATA for a channel that is not ready",
     )
 }
 
 fn recv_channel_eof(st: &mut ClientState, payload: &mut PacketDecode) -> ResultRecvState {
-    recv_channel_packet(st, payload,
-        |_, channel_st, _|
-            channel_state::recv_channel_eof(&mut channel_st.lock(), channel_st.clone()),
+    recv_channel_packet(
+        st,
+        payload,
+        |_, channel_st, _| {
+            channel_state::recv_channel_eof(&mut channel_st.lock(), channel_st.clone())
+        },
         "received SSH_MSG_CHANNEL_EOF for unknown channel",
         "received SSH_MSG_CHANNEL_EOF for a channel that is not ready",
     )
 }
 
 fn recv_channel_window_adjust(st: &mut ClientState, payload: &mut PacketDecode) -> ResultRecvState {
-    recv_channel_packet(st, payload,
-        |_, channel_st, payload| channel_state::recv_channel_window_adjust(&mut channel_st.lock(), payload),
+    recv_channel_packet(
+        st,
+        payload,
+        |_, channel_st, payload| {
+            channel_state::recv_channel_window_adjust(&mut channel_st.lock(), payload)
+        },
         "received SSH_MSG_CHANNEL_WINDOW_ADJUST for unknown channel",
         "received SSH_MSG_CHANNEL_WINDOW_ADJUST for a channel that is not ready",
     )
 }
 
 fn recv_channel_close(st: &mut ClientState, payload: &mut PacketDecode) -> ResultRecvState {
-    recv_channel_packet(st, payload,
+    recv_channel_packet(
+        st,
+        payload,
         |_, channel_st, _| channel_state::recv_channel_close(&mut channel_st.lock()),
         "received SSH_MSG_CHANNEL_CLOSE for unknown channel",
         "received SSH_MSG_CHANNEL_CLOSE for a channel that is not ready",
@@ -400,23 +437,22 @@ fn recv_channel_packet<F>(
     unknown_err: &'static str,
     not_ready_err: &'static str,
 ) -> ResultRecvState
-    where F: Fn(&mut ClientState, &Arc<Mutex<ChannelState>>, &mut PacketDecode) -> ResultRecvState
+where
+    F: Fn(&mut ClientState, &Arc<Mutex<ChannelState>>, &mut PacketDecode) -> ResultRecvState,
 {
     let our_id = payload.get_u32()?;
 
     let channels = st.conn_st.channels.clone();
     let mut channels = channels.lock();
-    guard!{let Some(conn_channel_st) = channels.get_mut(&our_id) else {
+    let Some(conn_channel_st) = channels.get_mut(&our_id) else {
         return Err(Error::Protocol(unknown_err));
-    }};
-    guard!{let ConnChannelState::Ready(channel_st) = conn_channel_st else {
+    };
+    let ConnChannelState::Ready(channel_st) = conn_channel_st else {
         return Err(Error::Protocol(not_ready_err));
-    }};
+    };
 
     callback(st, channel_st, payload)
 }
-
-
 
 fn recv_channel_open(st: &mut ClientState, payload: &mut PacketDecode) -> ResultRecvState {
     let channel_type = payload.get_string()?;
@@ -428,11 +464,21 @@ fn recv_channel_open(st: &mut ClientState, payload: &mut PacketDecode) -> Result
     let mut channels = st.conn_st.channels.lock();
     let our_id = alloc_our_id(&channels);
     let (accepted_tx, accepted_rx) = oneshot::channel();
-    let accept_st = AcceptChannelState { our_id, their_id, send_window, send_packet_len_max, accepted_rx };
+    let accept_st = AcceptChannelState {
+        our_id,
+        their_id,
+        send_window,
+        send_packet_len_max,
+        accepted_rx,
+    };
     channels.insert(our_id, ConnChannelState::Accept(accept_st));
 
-    log::debug!("received SSH_MSG_CHANNEL_OPEN {:?} for our channel {}, their channel {}",
-        channel_type, our_id, their_id);
+    log::debug!(
+        "received SSH_MSG_CHANNEL_OPEN {:?} for our channel {}, their channel {}",
+        channel_type,
+        our_id,
+        their_id
+    );
 
     let accept_channel = AcceptChannel {
         // we don't have a `Weak<Mutex<ClientState>>` handy, but `ClientReceiver` will set it
@@ -486,7 +532,10 @@ fn send_channel_open_confirmation(
     payload.put_u32(accepted.recv_packet_len_max as u32);
     payload.put_raw(&accepted.confirm_payload);
     st.codec.send_pipe.feed_packet(&payload.finish());
-    log::debug!("sending SSH_MSG_CHANNEL_OPEN_CONFIRMATION for our channel {}", accept_st.our_id);
+    log::debug!(
+        "sending SSH_MSG_CHANNEL_OPEN_CONFIRMATION for our channel {}",
+        accept_st.our_id
+    );
 }
 
 fn send_channel_open_failure(
@@ -494,12 +543,10 @@ fn send_channel_open_failure(
     accept_st: &AcceptChannelState,
     open_err: Option<ChannelOpenError>,
 ) {
-    let open_err = open_err.unwrap_or_else(|| {
-        ChannelOpenError {
-            reason_code: open::ADMINISTRATIVELY_PROHIBITED,
-            description: "administratively prohibited".into(),
-            description_lang: "".into(),
-        }
+    let open_err = open_err.unwrap_or_else(|| ChannelOpenError {
+        reason_code: open::ADMINISTRATIVELY_PROHIBITED,
+        description: "administratively prohibited".into(),
+        description_lang: "".into(),
     });
 
     let mut payload = PacketEncode::new();
@@ -509,11 +556,12 @@ fn send_channel_open_failure(
     payload.put_str(&open_err.description);
     payload.put_str(&open_err.description_lang);
     st.codec.send_pipe.feed_packet(&payload.finish());
-    log::debug!("sending SSH_MSG_CHANNEL_OPEN_FAILURE for our channel {}, reason: {}",
-        accept_st.our_id, open::to_str(open_err.reason_code).unwrap_or("unknown"));
+    log::debug!(
+        "sending SSH_MSG_CHANNEL_OPEN_FAILURE for our channel {}, reason: {}",
+        accept_st.our_id,
+        open::to_str(open_err.reason_code).unwrap_or("unknown")
+    );
 }
-
-
 
 pub(super) fn send_request(st: &mut ClientState, req: GlobalReq) -> Result<()> {
     st.conn_st.send_reqs.push_back(req);
@@ -532,9 +580,9 @@ fn send_global_request(st: &mut ClientState, req: &GlobalReq) {
 }
 
 fn recv_request_success(st: &mut ClientState, payload: &mut PacketDecode) -> ResultRecvState {
-    guard!{let Some(reply) = st.conn_st.recv_replies.pop_front() else {
+    let Some(reply) = st.conn_st.recv_replies.pop_front() else {
         return Err(Error::Protocol("received SSH_MSG_REQUEST_SUCCESS, but no reply was expected"))
-    }};
+    };
     log::debug!("received SSH_MSG_REQUEST_SUCCESS");
     let payload = payload.remaining();
     let _: Result<_, _> = reply.reply_tx.send(GlobalReply::Success(payload));
@@ -542,15 +590,13 @@ fn recv_request_success(st: &mut ClientState, payload: &mut PacketDecode) -> Res
 }
 
 fn recv_request_failure(st: &mut ClientState) -> ResultRecvState {
-    guard!{let Some(reply) = st.conn_st.recv_replies.pop_front() else {
+    let Some(reply) = st.conn_st.recv_replies.pop_front() else {
         return Err(Error::Protocol("received SSH_MSG_REQUEST_FAILURE, but no reply was expected"))
-    }};
+    };
     log::debug!("received SSH_MSG_REQUEST_FAILURE");
     let _: Result<_, _> = reply.reply_tx.send(GlobalReply::Failure);
     Ok(None)
 }
-
-
 
 fn packet_len_max_to_len_max(packet_len_max: usize) -> usize {
     // the SSH specification is unclear about the exact semantics of the 'maximum packet size'
