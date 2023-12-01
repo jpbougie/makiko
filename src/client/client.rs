@@ -599,6 +599,7 @@ impl ClientConfig {
                 &kex::DIFFIE_HELLMAN_GROUP16_SHA512,
                 &kex::DIFFIE_HELLMAN_GROUP18_SHA512,
                 &kex::DIFFIE_HELLMAN_GROUP14_SHA1,
+                &kex::DIFFIE_HELLMAN_GROUP_EXCHANGE_SHA256,
             ]);
             c.server_pubkey_algos.extend_from_slice(&[
                 &pubkey::ECDSA_SHA2_NISTP256,

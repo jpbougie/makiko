@@ -38,6 +38,11 @@ pub(crate) mod msg {
     pub const KEXDH_INIT: u8 = 30;
     pub const KEXDH_REPLY: u8 = 31;
 
+    pub const KEXDH_GEX_REQUEST: u8 = 34;
+    pub const KEXDH_GEX_GROUP: u8 = 31;
+    pub const KEXDH_GEX_INIT: u8 = 32;
+    pub const KEXDH_GEX_REPLY: u8 = 33;
+
     pub const USERAUTH_PASSWD_CHANGEREQ: u8 = 60;
     pub const USERAUTH_PK_OK: u8 = 60;
 }

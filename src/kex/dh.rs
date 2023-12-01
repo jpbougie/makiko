@@ -1,36 +1,60 @@
+use super::{Kex, KexAlgo, KexInput, KexOutput};
+use crate::codec::{PacketDecode, PacketEncode};
+use crate::codes::msg;
+use crate::error::{Error, Result};
+use crate::util::CryptoRngCore;
 use bytes::Bytes;
 use derivative::Derivative;
 use hex_literal::hex;
 use num_bigint_dig::{BigUint, RandBigInt as _};
 use std::task::Poll;
-use crate::codec::{PacketDecode, PacketEncode};
-use crate::codes::msg;
-use crate::error::{Error, Result};
-use crate::util::CryptoRngCore;
-use super::{KexAlgo, KexInput, KexOutput, Kex};
 
 /// "diffie-hellman-group14-sha1" key exchange from RFC 4253.
 pub static DIFFIE_HELLMAN_GROUP14_SHA1: KexAlgo = KexAlgo {
     name: "diffie-hellman-group14-sha1",
-    make_kex: |rng| Ok(Box::new(init_kex(Group::group_14(), compute_hash_sha1, rng)?)),
+    make_kex: |rng| {
+        Ok(Box::new(init_kex(
+            Group::group_14(),
+            compute_hash_sha1,
+            rng,
+        )?))
+    },
 };
 
 /// "diffie-hellman-group14-sha256" key exchange from RFC 8268.
 pub static DIFFIE_HELLMAN_GROUP14_SHA256: KexAlgo = KexAlgo {
     name: "diffie-hellman-group14-sha256",
-    make_kex: |rng| Ok(Box::new(init_kex(Group::group_14(), compute_hash_sha256, rng)?)),
+    make_kex: |rng| {
+        Ok(Box::new(init_kex(
+            Group::group_14(),
+            compute_hash_sha256,
+            rng,
+        )?))
+    },
 };
 
 /// "diffie-hellman-group16-sha512" key exchange from RFC 8268.
 pub static DIFFIE_HELLMAN_GROUP16_SHA512: KexAlgo = KexAlgo {
     name: "diffie-hellman-group16-sha512",
-    make_kex: |rng| Ok(Box::new(init_kex(Group::group_16(), compute_hash_sha512, rng)?)),
+    make_kex: |rng| {
+        Ok(Box::new(init_kex(
+            Group::group_16(),
+            compute_hash_sha512,
+            rng,
+        )?))
+    },
 };
 
 /// "diffie-hellman-group18-sha512" key exchange from RFC 8268.
 pub static DIFFIE_HELLMAN_GROUP18_SHA512: KexAlgo = KexAlgo {
     name: "diffie-hellman-group18-sha512",
-    make_kex: |rng| Ok(Box::new(init_kex(Group::group_18(), compute_hash_sha512, rng)?)),
+    make_kex: |rng| {
+        Ok(Box::new(init_kex(
+            Group::group_18(),
+            compute_hash_sha512,
+            rng,
+        )?))
+    },
 };
 
 /// "diffie-hellman-group1-sha1" key exchange from RFC 4253, which SHOULD NOT be implemented
@@ -40,9 +64,21 @@ pub static DIFFIE_HELLMAN_GROUP18_SHA512: KexAlgo = KexAlgo {
 #[cfg(feature = "insecure-crypto")]
 pub static DIFFIE_HELLMAN_GROUP1_SHA1: KexAlgo = KexAlgo {
     name: "diffie-hellman-group1-sha1",
-    make_kex: |rng| Ok(Box::new(init_kex(Group::group_2(), compute_hash_sha1, rng)?)),
+    make_kex: |rng| {
+        Ok(Box::new(init_kex(
+            Group::group_2(),
+            compute_hash_sha1,
+            rng,
+        )?))
+    },
 };
 
+/// "diffie-hellman-group-exchange-sha256" key exchange from RFC 4419.
+pub static DIFFIE_HELLMAN_GROUP_EXCHANGE_SHA256: KexAlgo = KexAlgo {
+    name: "diffie-hellman-group-exchange-sha256",
+    // We have to use the OsRng because we need to keep an owned version of the Rng
+    make_kex: |_rng| Ok(Box::new(init_gex_kex(compute_hash_sha256)?)),
+};
 
 #[derive(Debug)]
 struct Group {
@@ -75,10 +111,15 @@ fn init_kex(
     compute_hash: fn(&[u8]) -> Vec<u8>,
     rng: &mut dyn CryptoRngCore,
 ) -> Result<DiffieHellmanKex> {
-    let our_eph_privkey = rng.as_rngcore().gen_biguint_range(&BigUint::from(1u32), &group.p_minus_1);
+    let our_eph_privkey = rng
+        .as_rngcore()
+        .gen_biguint_range(&BigUint::from(1u32), &group.p_minus_1);
     let our_eph_pubkey = (group.g).modpow(&our_eph_privkey, &group.p);
     Ok(DiffieHellmanKex {
-        group, compute_hash, our_eph_privkey, our_eph_pubkey,
+        group,
+        compute_hash,
+        our_eph_privkey,
+        our_eph_pubkey,
         kexdh_init_sent: false,
         kexdh_reply: None,
     })
@@ -96,14 +137,14 @@ impl Kex for DiffieHellmanKex {
         if !self.kexdh_init_sent {
             let payload = send_kexdh_init(self)?;
             self.kexdh_init_sent = true;
-            return Ok(Some(payload))
+            return Ok(Some(payload));
         }
         Ok(None)
     }
 
     fn poll(&mut self, input: KexInput) -> Poll<Result<KexOutput>> {
         if self.kexdh_reply.is_some() {
-            return Poll::Ready(exchange(self, input))
+            return Poll::Ready(exchange(self, input));
         }
         Poll::Pending
     }
@@ -124,7 +165,7 @@ fn send_kexdh_init(kex: &mut DiffieHellmanKex) -> Result<Bytes> {
 
 fn recv_kexdh_reply(kex: &mut DiffieHellmanKex, payload: &mut PacketDecode) -> Result<()> {
     if kex.kexdh_reply.is_some() {
-        return Err(Error::Protocol("received duplicate SSH_MSG_KEXDH_REPLY"))
+        return Err(Error::Protocol("received duplicate SSH_MSG_KEXDH_REPLY"));
     }
 
     // RFC 4253, section 8
@@ -134,12 +175,18 @@ fn recv_kexdh_reply(kex: &mut DiffieHellmanKex, payload: &mut PacketDecode) -> R
 
     // RFC 8268, section 4
     if server_eph_pubkey <= BigUint::from(1u32) || server_eph_pubkey >= kex.group.p_minus_1 {
-        return Err(Error::Protocol("server sent invalid Diffie-Hellman ephemeral public key"))
+        return Err(Error::Protocol(
+            "server sent invalid Diffie-Hellman ephemeral public key",
+        ));
     }
 
     let server_pubkey = Bytes::copy_from_slice(&server_pubkey);
     let server_exchange_hash_sign = Bytes::copy_from_slice(&server_exchange_hash_sign);
-    kex.kexdh_reply = Some(KexdhReply { server_pubkey, server_eph_pubkey, server_exchange_hash_sign });
+    kex.kexdh_reply = Some(KexdhReply {
+        server_pubkey,
+        server_eph_pubkey,
+        server_exchange_hash_sign,
+    });
     log::debug!("received SSH_MSG_KEXDH_REPLY");
 
     Ok(())
@@ -147,7 +194,11 @@ fn recv_kexdh_reply(kex: &mut DiffieHellmanKex, payload: &mut PacketDecode) -> R
 
 fn exchange(kex: &mut DiffieHellmanKex, input: KexInput) -> Result<KexOutput> {
     let kexdh_reply = kex.kexdh_reply.take().unwrap();
-    let KexdhReply { server_pubkey, server_eph_pubkey, server_exchange_hash_sign } = kexdh_reply;
+    let KexdhReply {
+        server_pubkey,
+        server_eph_pubkey,
+        server_exchange_hash_sign,
+    } = kexdh_reply;
 
     let shared_secret = (server_eph_pubkey).modpow(&kex.our_eph_privkey, &kex.group.p);
 
@@ -162,7 +213,12 @@ fn exchange(kex: &mut DiffieHellmanKex, input: KexInput) -> Result<KexOutput> {
     exchange_data.put_biguint(&shared_secret);
     let exchange_hash = (kex.compute_hash)(&exchange_data.finish());
 
-    Ok(KexOutput { shared_secret, exchange_hash, server_pubkey, server_exchange_hash_sign })
+    Ok(KexOutput {
+        shared_secret,
+        exchange_hash,
+        server_pubkey,
+        server_exchange_hash_sign,
+    })
 }
 
 fn compute_hash_sha1(data: &[u8]) -> Vec<u8> {
@@ -299,4 +355,193 @@ impl Group {
         let p_minus_1 = &p - BigUint::from(1u32);
         Group { g, p, p_minus_1 }
     }
+}
+
+#[derive(Derivative)]
+#[derivative(Debug)]
+struct DiffieHellmanKexExchange {
+    group: Option<Group>,
+    #[derivative(Debug = "ignore")]
+    compute_hash: fn(&[u8]) -> Vec<u8>,
+    our_eph_privkey: Option<BigUint>,
+    our_eph_pubkey: Option<BigUint>,
+    kex_exchange_init_sent: bool,
+    kexdh_init_sent: bool,
+    kexdh_reply: Option<KexdhReply>,
+}
+
+fn init_gex_kex(compute_hash: fn(&[u8]) -> Vec<u8>) -> Result<DiffieHellmanKexExchange> {
+    Ok(DiffieHellmanKexExchange {
+        group: None,
+        compute_hash,
+        our_eph_privkey: None,
+        our_eph_pubkey: None,
+        kex_exchange_init_sent: false,
+        kexdh_init_sent: false,
+        kexdh_reply: None,
+    })
+}
+
+impl Kex for DiffieHellmanKexExchange {
+    fn recv_packet(&mut self, msg_id: u8, payload: &mut PacketDecode) -> Result<()> {
+        match msg_id {
+            msg::KEXDH_GEX_GROUP => recv_gex_kex_group(self, payload),
+            msg::KEXDH_GEX_REPLY => recv_gex_kexdh_reply(self, payload),
+            _ => Err(Error::PacketNotImplemented(msg_id)),
+        }
+    }
+
+    fn send_packet(&mut self) -> Result<Option<Bytes>> {
+        if !self.kex_exchange_init_sent {
+            let payload = send_gex_kex_exchange_init(self)?;
+            self.kex_exchange_init_sent = true;
+            return Ok(Some(payload));
+        }
+
+        if self.our_eph_privkey.is_none() {
+            return Ok(None);
+        }
+
+        if !self.kexdh_init_sent {
+            let payload = send_gex_kexdh_init(self)?;
+            self.kexdh_init_sent = true;
+            return Ok(Some(payload));
+        }
+        Ok(None)
+    }
+
+    fn poll(&mut self, input: KexInput) -> Poll<Result<KexOutput>> {
+        if self.kexdh_reply.is_some() {
+            return Poll::Ready(gex_exchange(self, input));
+        }
+        Poll::Pending
+    }
+
+    fn compute_hash(&self, data: &[u8]) -> Vec<u8> {
+        (self.compute_hash)(data)
+    }
+}
+
+const DH_GROUP_MIN_BITS: u32 = 2048;
+const DH_GROUP_PREFERRED_BITS: u32 = 2048;
+const DH_GROUP_MAX_BITS: u32 = 8192;
+
+fn send_gex_kex_exchange_init(_kex: &mut DiffieHellmanKexExchange) -> Result<Bytes> {
+    let mut payload = PacketEncode::new();
+    payload.put_u8(msg::KEXDH_GEX_REQUEST);
+    payload.put_u32(DH_GROUP_MIN_BITS);
+    payload.put_u32(DH_GROUP_PREFERRED_BITS);
+    payload.put_u32(DH_GROUP_MAX_BITS);
+    log::debug!("sending SSH_MSG_KEX_GEX_REQUEST");
+    Ok(payload.finish())
+}
+
+fn send_gex_kexdh_init(kex: &mut DiffieHellmanKexExchange) -> Result<Bytes> {
+    // RFC 4419
+    let mut payload = PacketEncode::new();
+    payload.put_u8(msg::KEXDH_GEX_INIT);
+    payload.put_biguint(kex.our_eph_pubkey.as_ref().unwrap());
+    log::debug!("sending SSH_MSG_KEX_DH_GEX_INIT");
+    Ok(payload.finish())
+}
+
+fn recv_gex_kex_group(
+    kex: &mut DiffieHellmanKexExchange,
+    payload: &mut PacketDecode,
+) -> Result<()> {
+    // RFC 4419
+    let p = payload.get_biguint()?;
+    let g = payload.get_biguint()?;
+    let p_minus_1 = &p - BigUint::from(1u32);
+    let group = Group { g, p, p_minus_1 };
+    if group.p_minus_1 <= BigUint::from(1u32) {
+        return Err(Error::Protocol("server sent invalid Diffie-Hellman group"));
+    }
+    let our_eph_privkey = rand::rngs::OsRng
+        .as_rngcore()
+        .gen_biguint_range(&BigUint::from(1u32), &group.p_minus_1);
+    let our_eph_pubkey = (group.g).modpow(&our_eph_privkey, &group.p);
+
+    kex.our_eph_privkey = Some(our_eph_privkey);
+    kex.our_eph_pubkey = Some(our_eph_pubkey);
+    kex.group = Some(group);
+
+    log::debug!("received SSH_MSG_KEX_DH_GEX_GROUP");
+    Ok(())
+}
+
+fn recv_gex_kexdh_reply(
+    kex: &mut DiffieHellmanKexExchange,
+    payload: &mut PacketDecode,
+) -> Result<()> {
+    if kex.kexdh_reply.is_some() {
+        return Err(Error::Protocol("received duplicate SSH_MSG_KEXDH_REPLY"));
+    }
+
+    let Some(ref group) = kex.group else {
+        return Err(Error::Protocol(
+            "server sent SSH_MSG_KEXDH_REPLY before SSH_MSG_KEXDH_GEX_GROUP",
+        ));
+    };
+
+    // RFC 4253, section 8
+    let server_pubkey = payload.get_bytes()?;
+    let server_eph_pubkey = payload.get_biguint()?;
+    let server_exchange_hash_sign = payload.get_bytes()?;
+
+    // RFC 8268, section 4
+    if server_eph_pubkey <= BigUint::from(1u32) || server_eph_pubkey >= group.p_minus_1 {
+        return Err(Error::Protocol(
+            "server sent invalid Diffie-Hellman ephemeral public key",
+        ));
+    }
+
+    let server_pubkey = Bytes::copy_from_slice(&server_pubkey);
+    let server_exchange_hash_sign = Bytes::copy_from_slice(&server_exchange_hash_sign);
+    kex.kexdh_reply = Some(KexdhReply {
+        server_pubkey,
+        server_eph_pubkey,
+        server_exchange_hash_sign,
+    });
+    log::debug!("received SSH_MSG_KEX_DH_GEX_REPLY");
+
+    Ok(())
+}
+
+fn gex_exchange(kex: &mut DiffieHellmanKexExchange, input: KexInput) -> Result<KexOutput> {
+    let kexdh_reply = kex.kexdh_reply.take().unwrap();
+    let KexdhReply {
+        server_pubkey,
+        server_eph_pubkey,
+        server_exchange_hash_sign,
+    } = kexdh_reply;
+
+    let group = kex.group.take().unwrap();
+    let our_eph_privkey = kex.our_eph_privkey.take().unwrap();
+    let our_eph_pubkey = kex.our_eph_pubkey.take().unwrap();
+
+    let shared_secret = (server_eph_pubkey).modpow(&our_eph_privkey, &group.p);
+
+    let mut exchange_data = PacketEncode::new();
+    exchange_data.put_bytes(input.client_ident);
+    exchange_data.put_bytes(input.server_ident);
+    exchange_data.put_bytes(input.client_kex_init);
+    exchange_data.put_bytes(input.server_kex_init);
+    exchange_data.put_bytes(&server_pubkey);
+    exchange_data.put_u32(DH_GROUP_MIN_BITS);
+    exchange_data.put_u32(DH_GROUP_PREFERRED_BITS);
+    exchange_data.put_u32(DH_GROUP_MAX_BITS);
+    exchange_data.put_biguint(&group.p);
+    exchange_data.put_biguint(&group.g);
+    exchange_data.put_biguint(&our_eph_pubkey);
+    exchange_data.put_biguint(&server_eph_pubkey);
+    exchange_data.put_biguint(&shared_secret);
+    let exchange_hash = (kex.compute_hash)(&exchange_data.finish());
+
+    Ok(KexOutput {
+        shared_secret,
+        exchange_hash,
+        server_pubkey,
+        server_exchange_hash_sign,
+    })
 }
