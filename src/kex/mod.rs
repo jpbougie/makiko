@@ -15,18 +15,19 @@
 //! - "diffie-hellman-group14-sha256" ([`DIFFIE_HELLMAN_GROUP14_SHA256`])
 //! - "diffie-hellman-group16-sha512" ([`DIFFIE_HELLMAN_GROUP16_SHA512`])
 //! - "diffie-hellman-group18-sha512" ([`DIFFIE_HELLMAN_GROUP18_SHA512`])
+//! - "diffie-hellman-group-exchange-sha512" ([`DIFFIE_HELLMAN_GROUP_EXCHANGE_SHA512`])
+pub use self::curve25519::{CURVE25519_SHA256, CURVE25519_SHA256_LIBSSH};
+pub use self::dh::{
+    DIFFIE_HELLMAN_GROUP14_SHA1, DIFFIE_HELLMAN_GROUP14_SHA256, DIFFIE_HELLMAN_GROUP16_SHA512,
+    DIFFIE_HELLMAN_GROUP18_SHA512, DIFFIE_HELLMAN_GROUP_EXCHANGE_SHA256,
+};
+use crate::codec::PacketDecode;
+use crate::util::CryptoRngCore;
+use crate::Result;
 use bytes::Bytes;
 use derivative::Derivative;
 use num_bigint_dig::BigUint;
 use std::task::Poll;
-use crate::Result;
-use crate::codec::PacketDecode;
-use crate::util::CryptoRngCore;
-pub use self::curve25519::{CURVE25519_SHA256, CURVE25519_SHA256_LIBSSH};
-pub use self::dh::{
-    DIFFIE_HELLMAN_GROUP14_SHA1, DIFFIE_HELLMAN_GROUP14_SHA256,
-    DIFFIE_HELLMAN_GROUP16_SHA512, DIFFIE_HELLMAN_GROUP18_SHA512,
-};
 
 mod curve25519;
 mod dh;
